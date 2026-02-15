@@ -290,8 +290,11 @@ class App {
     this.tapBPM = new TapBPM();
     this.syncing = false;
 
+    this._deferredInstallPrompt = null;
+
     this._cacheElements();
     this._bindEvents();
+    this._setupInstall();
     this._startUILoop();
   }
 
@@ -324,6 +327,7 @@ class App {
       smoothing: document.getElementById('smoothing'),
       smoothingValue: document.getElementById('smoothingValue'),
       simMode: document.getElementById('simMode'),
+      btnInstall: document.getElementById('btnInstall'),
     };
   }
 
@@ -498,6 +502,29 @@ class App {
     } else {
       this.els.spmRing.classList.remove('active');
     }
+  }
+
+  _setupInstall() {
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      this._deferredInstallPrompt = e;
+      this.els.btnInstall.hidden = false;
+    });
+
+    this.els.btnInstall.addEventListener('click', async () => {
+      if (!this._deferredInstallPrompt) return;
+      this._deferredInstallPrompt.prompt();
+      const { outcome } = await this._deferredInstallPrompt.userChoice;
+      if (outcome === 'accepted') {
+        this.els.btnInstall.hidden = true;
+      }
+      this._deferredInstallPrompt = null;
+    });
+
+    window.addEventListener('appinstalled', () => {
+      this.els.btnInstall.hidden = true;
+      this._deferredInstallPrompt = null;
+    });
   }
 
   _startUILoop() {

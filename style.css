@@ -335,6 +335,26 @@ main {
   border-color: var(--accent);
 }
 
+/* Install button */
+.btn-install {
+  width: 100%;
+  height: 44px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), #0090ff);
+  border: none;
+  color: var(--bg);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: transform 0.1s, opacity 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-install:active {
+  transform: scale(0.97);
+}
+
 /* Settings */
 .settings {
   width: 100%;
