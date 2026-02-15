@@ -1,6 +1,6 @@
 {
-  "name": "WalkBeat",
-  "short_name": "WalkBeat",
+  "name": "Cadence",
+  "short_name": "Cadence",
   "description": "Sync music BPM to your walking cadence",
   "start_url": ".",
   "display": "standalone",

@@ -237,8 +237,8 @@ class AudioEngine {
   _updateMediaSession() {
     if (!('mediaSession' in navigator)) return;
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: this.fileName || 'WalkBeat',
-      artist: 'WalkBeat',
+      title: this.fileName || 'Cadence',
+      artist: 'Cadence',
     });
   }
 

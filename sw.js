@@ -1,4 +1,4 @@
-const CACHE_NAME = 'walkbeat-v1';
+const CACHE_NAME = 'cadence-v1';
 const ASSETS = [
   './',
   './index.html',
