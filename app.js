@@ -252,171 +252,160 @@ class AudioEngine {
 
 class BPMDetector {
   /**
-   * Detect BPM using multi-band onset detection + comb filter autocorrelation.
-   * Analyzes multiple frequency bands independently, then combines scores.
+   * Detect BPM using proper biquad filtering + comb filter autocorrelation.
+   * Uses OfflineAudioContext for accurate band separation, then scores
+   * each BPM candidate by summing autocorrelation at beat-period harmonics.
    */
   static async detect(file) {
     const arrayBuffer = await file.arrayBuffer();
-    const audioCtx = new OfflineAudioContext(1, 1, 44100);
-    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    const decCtx = new OfflineAudioContext(1, 1, 44100);
+    const audioBuf = await decCtx.decodeAudioData(arrayBuffer);
 
-    const sampleRate = audioBuffer.sampleRate;
-    const totalSamples = audioBuffer.length;
+    const sr = audioBuf.sampleRate;
+    const skip = Math.min(15, audioBuf.duration * 0.15);
+    const dur = Math.min(30, audioBuf.duration - skip);
+    if (dur < 5) throw new Error('Track too short for BPM detection');
+    const outLen = Math.ceil(dur * sr);
 
-    // Analyze up to 45s, starting 10% in to skip intros
-    const startSample = Math.floor(totalSamples * 0.1);
-    const analyzeSamples = Math.min(
-      Math.floor(45 * sampleRate),
-      totalSamples - startSample
-    );
-    const raw = audioBuffer.getChannelData(0).slice(startSample, startSample + analyzeSamples);
+    // Render bass and full-range filtered versions in parallel
+    const [bass, full] = await Promise.all([
+      // 4th-order Butterworth LPF at 200Hz (two cascaded biquads)
+      BPMDetector._renderFiltered(audioBuf, sr, outLen, skip, dur, [
+        { type: 'lowpass', freq: 200, Q: 0.707 },
+        { type: 'lowpass', freq: 200, Q: 0.707 },
+      ]),
+      // High-pass at 60Hz to remove DC/sub-bass rumble
+      BPMDetector._renderFiltered(audioBuf, sr, outLen, skip, dur, [
+        { type: 'highpass', freq: 60, Q: 0.707 },
+      ]),
+    ]);
 
-    // --- 1. Multi-band filtering using single-pole IIR filters ---
-    // Split into 3 bands: bass (<200Hz), mid (200-2000Hz), treble (>2000Hz)
-    const lowPass = BPMDetector._lowPassFilter(raw, sampleRate, 200);
-    const midFull = BPMDetector._lowPassFilter(raw, sampleRate, 2000);
-    const mid = new Float32Array(midFull.length);
-    for (let i = 0; i < mid.length; i++) mid[i] = midFull[i] - lowPass[i];
-    const hi = new Float32Array(raw.length);
-    for (let i = 0; i < hi.length; i++) hi[i] = raw[i] - midFull[i];
+    // Onset detection: 10ms hop (~100 frames/sec), 25ms analysis window
+    const hop = Math.round(sr * 0.01);
+    const win = Math.round(sr * 0.025);
+    const bassOnset = BPMDetector._onsetEnvelope(bass, win, hop);
+    const fullOnset = BPMDetector._onsetEnvelope(full, win, hop);
 
-    // --- 2. Compute onset functions per band ---
-    // Use ~10ms hop for ~100 onsets/sec
-    const hopSamples = Math.floor(sampleRate * 0.01);
-    const winSamples = Math.floor(sampleRate * 0.025);
-
-    const bands = [lowPass, mid, hi];
-    const bandWeights = [1.5, 1.0, 0.7]; // bass weighted more heavily
-    const bandOnsets = bands.map(band => BPMDetector._onsetEnvelope(band, winSamples, hopSamples));
-
-    // --- 3. Comb filter autocorrelation per band ---
-    const onsetRate = sampleRate / hopSamples;
+    // Pre-compute normalized autocorrelation for both bands
+    const onsetRate = sr / hop;
     const minBPM = 60, maxBPM = 200;
-    const minLag = Math.floor((60 / maxBPM) * onsetRate);
-    const maxLag = Math.ceil((60 / minBPM) * onsetRate);
+    const maxLag = Math.ceil((60 / minBPM) * onsetRate * 4) + 1;
+    const bassACF = BPMDetector._autocorrelation(bassOnset, maxLag);
+    const fullACF = BPMDetector._autocorrelation(fullOnset, maxLag);
 
-    // Score each integer BPM candidate
+    // Comb filter scoring: for each BPM, sum ACF at harmonics 1-4
+    // Equal weighting — avoids the 1/h bias that favors half-time
     const scores = new Float64Array(maxBPM - minBPM + 1);
-
-    for (let b = 0; b < bands.length; b++) {
-      const onset = bandOnsets[b];
-      const n = onset.length;
-      const weight = bandWeights[b];
-
-      // Compute raw autocorrelation for this band
-      const acf = new Float64Array(maxLag + 1);
-      for (let lag = minLag; lag <= maxLag; lag++) {
-        let sum = 0;
-        for (let i = 0; i + lag < n; i++) {
-          sum += onset[i] * onset[i + lag];
-        }
-        acf[lag] = sum / (n - lag);
-      }
-
-      // Comb filter: for each BPM, sum autocorrelation at lag multiples
-      for (let bpm = minBPM; bpm <= maxBPM; bpm++) {
-        const baseLag = (60 * onsetRate) / bpm;
-        let score = 0;
-        // Check harmonics 1x through 4x
-        for (let h = 1; h <= 4; h++) {
-          const hLag = Math.round(baseLag * h);
-          if (hLag <= maxLag) {
-            // Weight lower harmonics more
-            score += acf[hLag] * (1 / h);
-          }
-        }
-        scores[bpm - minBPM] += score * weight;
-      }
-    }
-
-    // --- 4. Apply perceptual tempo weighting ---
-    // People perceive tempos near 120 BPM most naturally.
-    // Use a Gaussian centered at 120 BPM to slightly prefer common tempos.
     for (let bpm = minBPM; bpm <= maxBPM; bpm++) {
-      const dist = (bpm - 120) / 50;
-      scores[bpm - minBPM] *= Math.exp(-0.5 * dist * dist) * 0.3 + 0.7;
+      const baseLag = (60 * onsetRate) / bpm;
+      let bScore = 0, fScore = 0;
+      for (let h = 1; h <= 4; h++) {
+        const lag = Math.round(baseLag * h);
+        if (lag < bassACF.length) bScore += bassACF[lag];
+        if (lag < fullACF.length) fScore += fullACF[lag];
+      }
+      scores[bpm - minBPM] = bScore * 2.0 + fScore;
     }
 
-    // --- 5. Find best BPM ---
-    let bestBPM = 120;
-    let bestScore = -Infinity;
+    // Mild perceptual bias toward common tempos (centered at 120)
+    for (let bpm = minBPM; bpm <= maxBPM; bpm++) {
+      const d = (bpm - 120) / 55;
+      scores[bpm - minBPM] *= 0.8 + 0.2 * Math.exp(-0.5 * d * d);
+    }
+
+    // Find best candidate
+    let best = 120, bestScore = -Infinity;
     for (let bpm = minBPM; bpm <= maxBPM; bpm++) {
       if (scores[bpm - minBPM] > bestScore) {
         bestScore = scores[bpm - minBPM];
-        bestBPM = bpm;
+        best = bpm;
       }
     }
 
-    // --- 6. Resolve octave ambiguity ---
-    // Check if half or double tempo scores nearly as well
-    const halfBPM = Math.round(bestBPM / 2);
-    const dblBPM = Math.round(bestBPM * 2);
-
-    if (halfBPM >= minBPM) {
-      const halfScore = scores[halfBPM - minBPM];
-      // Prefer half-time if it's at least 80% as strong and in comfortable range
-      if (halfScore > bestScore * 0.8 && halfBPM >= 80) {
-        bestBPM = halfBPM;
-      }
+    // Resolve octave ambiguity
+    const half = Math.round(best / 2);
+    const dbl = Math.round(best * 2);
+    if (half >= minBPM && half <= maxBPM &&
+        scores[half - minBPM] > bestScore * 0.85 && half >= 80) {
+      best = half;
     }
-    if (dblBPM <= maxBPM) {
-      const dblScore = scores[dblBPM - minBPM];
-      // Prefer double-time only if significantly stronger
-      if (dblScore > bestScore * 1.3) {
-        bestBPM = dblBPM;
-      }
+    if (dbl >= minBPM && dbl <= maxBPM &&
+        scores[dbl - minBPM] > bestScore * 1.2) {
+      best = dbl;
     }
 
-    return bestBPM;
+    return best;
   }
 
-  /** Single-pole IIR low-pass filter */
-  static _lowPassFilter(data, sampleRate, cutoffHz) {
-    const rc = 1 / (2 * Math.PI * cutoffHz);
-    const dt = 1 / sampleRate;
-    const alpha = dt / (rc + dt);
-    const out = new Float32Array(data.length);
-    out[0] = data[0];
-    for (let i = 1; i < data.length; i++) {
-      out[i] = out[i - 1] + alpha * (data[i] - out[i - 1]);
+  /** Render audio through a chain of biquad filters via OfflineAudioContext */
+  static async _renderFiltered(audioBuf, sr, outLen, skip, dur, filters) {
+    const ctx = new OfflineAudioContext(1, outLen, sr);
+    const src = ctx.createBufferSource();
+    src.buffer = audioBuf;
+    let node = src;
+    for (const f of filters) {
+      const bq = ctx.createBiquadFilter();
+      bq.type = f.type;
+      bq.frequency.value = f.freq;
+      bq.Q.value = f.Q;
+      node.connect(bq);
+      node = bq;
     }
-    return out;
+    node.connect(ctx.destination);
+    src.start(0, skip, dur);
+    return (await ctx.startRendering()).getChannelData(0);
   }
 
-  /** Compute onset strength envelope: energy difference, half-wave rectified */
-  static _onsetEnvelope(samples, windowSize, hopSize) {
-    const numFrames = Math.floor((samples.length - windowSize) / hopSize);
-    if (numFrames < 2) return new Float32Array(0);
-
-    // Compute RMS energy per frame
-    const energy = new Float32Array(numFrames);
-    for (let f = 0; f < numFrames; f++) {
-      const start = f * hopSize;
+  /** Normalized autocorrelation (divided by zero-lag energy) */
+  static _autocorrelation(signal, maxLag) {
+    const n = signal.length;
+    const len = Math.min(maxLag + 1, n);
+    const acf = new Float64Array(len);
+    for (let lag = 0; lag < len; lag++) {
       let sum = 0;
-      for (let i = 0; i < windowSize; i++) {
-        sum += samples[start + i] ** 2;
+      const count = n - lag;
+      for (let i = 0; i < count; i++) {
+        sum += signal[i] * signal[i + lag];
       }
-      energy[f] = Math.sqrt(sum / windowSize);
+      acf[lag] = sum / count;
+    }
+    if (acf[0] > 0) {
+      for (let i = len - 1; i >= 0; i--) acf[i] /= acf[0];
+    }
+    return acf;
+  }
+
+  /** Onset strength: RMS energy difference, adaptively thresholded */
+  static _onsetEnvelope(data, win, hop) {
+    const n = Math.floor((data.length - win) / hop);
+    if (n < 2) return new Float32Array(0);
+
+    const energy = new Float32Array(n);
+    for (let f = 0; f < n; f++) {
+      let sum = 0;
+      const s = f * hop;
+      for (let i = 0; i < win; i++) sum += data[s + i] ** 2;
+      energy[f] = Math.sqrt(sum / win);
     }
 
-    // Onset = positive energy difference (half-wave rectified)
-    const onset = new Float32Array(numFrames);
-    for (let i = 1; i < numFrames; i++) {
+    // Half-wave rectified first difference
+    const onset = new Float32Array(n);
+    for (let i = 1; i < n; i++) {
       onset[i] = Math.max(0, energy[i] - energy[i - 1]);
     }
 
-    // Adaptive thresholding: subtract local mean to suppress constant-energy sections
-    const meanWindow = 15;
-    for (let i = 0; i < numFrames; i++) {
-      const lo = Math.max(0, i - meanWindow);
-      const hi = Math.min(numFrames, i + meanWindow + 1);
+    // Adaptive threshold: subtract local mean to suppress sustained sections
+    const hw = 10;
+    const result = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const lo = Math.max(0, i - hw);
+      const hi = Math.min(n, i + hw + 1);
       let mean = 0;
       for (let j = lo; j < hi; j++) mean += onset[j];
       mean /= (hi - lo);
-      onset[i] = Math.max(0, onset[i] - mean);
+      result[i] = Math.max(0, onset[i] - mean);
     }
-
-    return onset;
+    return result;
   }
 }
 
