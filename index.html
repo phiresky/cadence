@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0a1a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>WalkBeat</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>WalkBeat</h1>
+      <p class="subtitle">sync music to your stride</p>
+    </header>
+
+    <main>
+      <!-- SPM Ring Display -->
+      <div class="spm-display" id="spmDisplay">
+        <svg class="spm-ring" viewBox="0 0 200 200">
+          <circle class="ring-bg" cx="100" cy="100" r="88" />
+          <circle class="ring-fill" id="spmRing" cx="100" cy="100" r="88" />
+        </svg>
+        <div class="spm-value">
+          <span class="spm-number" id="spmNumber">--</span>
+          <span class="spm-label">steps/min</span>
+        </div>
+        <div class="step-flash" id="stepFlash"></div>
+      </div>
+
+      <!-- BPM Info -->
+      <div class="bpm-info">
+        <div class="bpm-card">
+          <span class="bpm-card-label">Track BPM</span>
+          <span class="bpm-card-value" id="trackBPM">--</span>
+        </div>
+        <div class="bpm-card">
+          <span class="bpm-card-label">Playback</span>
+          <span class="bpm-card-value" id="playbackRate">1.00x</span>
+        </div>
+        <div class="bpm-card">
+          <span class="bpm-card-label">Adjusted BPM</span>
+          <span class="bpm-card-value" id="adjustedBPM">--</span>
+        </div>
+      </div>
+
+      <!-- Track Info -->
+      <div class="track-info" id="trackInfo">
+        <span class="track-name" id="trackName">No track loaded</span>
+        <div class="progress-bar" id="progressBar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="time-display">
+          <span id="currentTime">0:00</span>
+          <span id="duration">0:00</span>
+        </div>
+      </div>
+
+      <!-- Playback Controls -->
+      <div class="controls">
+        <button class="btn btn-secondary" id="btnLoadFile" title="Load audio file">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </button>
+        <button class="btn btn-primary btn-large" id="btnPlayPause" disabled title="Play / Pause">
+          <svg class="icon-play" viewBox="0 0 24 24" width="32" height="32" fill="currentColor">
+            <polygon points="5,3 19,12 5,21"/>
+          </svg>
+          <svg class="icon-pause" viewBox="0 0 24 24" width="32" height="32" fill="currentColor" style="display:none">
+            <rect x="4" y="3" width="6" height="18"/>
+            <rect x="14" y="3" width="6" height="18"/>
+          </svg>
+        </button>
+        <button class="btn btn-secondary" id="btnSync" title="Start step sync">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Tap BPM -->
+      <div class="tap-bpm-section">
+        <button class="btn btn-tap" id="btnTapBPM">Tap BPM</button>
+        <input type="number" class="bpm-input" id="bpmInput" min="40" max="220" placeholder="BPM" title="Enter track BPM">
+      </div>
+
+      <!-- Settings -->
+      <details class="settings">
+        <summary>Settings</summary>
+        <div class="settings-content">
+          <label>
+            Step Sensitivity
+            <input type="range" id="sensitivity" min="0.2" max="2.0" step="0.1" value="0.8">
+            <span id="sensitivityValue">0.8</span>
+          </label>
+          <label>
+            Min Playback Rate
+            <input type="range" id="minRate" min="0.5" max="1.0" step="0.05" value="0.7">
+            <span id="minRateValue">0.70x</span>
+          </label>
+          <label>
+            Max Playback Rate
+            <input type="range" id="maxRate" min="1.0" max="2.0" step="0.05" value="1.4">
+            <span id="maxRateValue">1.40x</span>
+          </label>
+          <label>
+            Smoothing (rate change speed)
+            <input type="range" id="smoothing" min="0.01" max="0.3" step="0.01" value="0.08">
+            <span id="smoothingValue">0.08</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="simMode">
+            Desktop simulation mode (tap spacebar for steps)
+          </label>
+        </div>
+      </details>
+    </main>
+
+    <input type="file" id="fileInput" accept="audio/*" hidden>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

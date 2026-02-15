@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0a0a1a"/>
+  <circle cx="256" cy="240" r="120" fill="none" stroke="#00d4ff" stroke-width="16" opacity="0.3"/>
+  <circle cx="256" cy="240" r="120" fill="none" stroke="#00d4ff" stroke-width="16"
+    stroke-dasharray="754" stroke-dashoffset="188" stroke-linecap="round"
+    transform="rotate(-90 256 240)"/>
+  <text x="256" y="255" text-anchor="middle" font-family="system-ui,sans-serif"
+    font-size="80" font-weight="700" fill="#e8e8f0">120</text>
+  <text x="256" y="290" text-anchor="middle" font-family="system-ui,sans-serif"
+    font-size="20" fill="#8888aa" letter-spacing="2">SPM</text>
+  <!-- footstep hints -->
+  <circle cx="200" cy="410" r="16" fill="#ff6b35" opacity="0.8"/>
+  <circle cx="256" cy="400" r="16" fill="#ff6b35" opacity="0.6"/>
+  <circle cx="312" cy="410" r="16" fill="#ff6b35" opacity="0.4"/>
+</svg>
