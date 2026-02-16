@@ -1,5 +1,5 @@
 // Version is auto-bumped by pre-commit hook
-const CACHE_VERSION = 11;
+const CACHE_VERSION = 12;
 const CACHE_NAME = 'cadence-v' + CACHE_VERSION;
 const ASSETS = [
   './',

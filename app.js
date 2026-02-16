@@ -703,11 +703,6 @@ class App {
 
     this._updatePlaylistUI();
 
-    // Start BPM detection for new tracks
-    for (let i = startIndex; i < this.playlist.length; i++) {
-      this._detectBPM(i);
-    }
-
     // Auto-play first track if nothing is loaded
     if (this.currentTrackIndex < 0) {
       this._playTrack(startIndex);
@@ -759,7 +754,9 @@ class App {
       } else {
         this.audioEngine.originalBPM = 0;
         this.els.bpmInput.value = '';
-        this.els.trackBPM.textContent = track.detecting ? '...' : '--';
+        this.els.trackBPM.textContent = '--';
+        // Detect BPM on demand for current track
+        if (!track.detecting) this._detectBPM(index);
       }
 
       this.audioEngine.play();
