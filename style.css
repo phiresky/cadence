@@ -335,6 +335,121 @@ main {
   border-color: var(--accent);
 }
 
+/* Playlist */
+.playlist {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.playlist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.playlist-title {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.playlist-clear {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.playlist-clear:hover {
+  color: var(--text);
+}
+
+.playlist-tracks {
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.playlist-track {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  gap: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 0.8rem;
+}
+
+.playlist-track:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.playlist-track.active {
+  background: rgba(0, 212, 255, 0.08);
+}
+
+.playlist-track-num {
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  min-width: 22px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.playlist-track.active .playlist-track-num {
+  color: var(--accent);
+}
+
+.playlist-track-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.playlist-track-bpm {
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 36px;
+  text-align: right;
+}
+
+/* Drop overlay */
+.drop-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 212, 255, 0.08);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+
+.drop-overlay.visible {
+  display: flex;
+}
+
+.drop-message {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--accent);
+  border: 2px dashed var(--accent);
+  border-radius: 20px;
+  padding: 40px 60px;
+  pointer-events: none;
+}
+
 /* Install button */
 .btn-install {
   width: 100%;
@@ -441,4 +556,12 @@ main {
 
 .spm-display.syncing .spm-label {
   color: var(--accent);
+}
+
+.version {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-align: center;
+  opacity: 0.5;
+  padding-bottom: 8px;
 }

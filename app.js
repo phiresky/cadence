@@ -452,10 +452,15 @@ class App {
     this.tapBPM = new TapBPM();
     this.syncing = false;
 
+    // Playlist state
+    this.playlist = []; // [{ file, name, bpm, detecting }]
+    this.currentTrackIndex = -1;
+
     this._deferredInstallPrompt = null;
 
     this._cacheElements();
     this._bindEvents();
+    this._setupDragDrop();
     this._setupInstall();
     this._startUILoop();
   }
@@ -490,16 +495,42 @@ class App {
       smoothingValue: document.getElementById('smoothingValue'),
       simMode: document.getElementById('simMode'),
       btnInstall: document.getElementById('btnInstall'),
+      btnPrev: document.getElementById('btnPrev'),
+      btnNext: document.getElementById('btnNext'),
+      playlist: document.getElementById('playlist'),
+      playlistTitle: document.getElementById('playlistTitle'),
+      playlistTracks: document.getElementById('playlistTracks'),
+      btnClearPlaylist: document.getElementById('btnClearPlaylist'),
+      fileInputSingle: document.getElementById('fileInputSingle'),
+      dropOverlay: document.getElementById('dropOverlay'),
     };
   }
 
   _bindEvents() {
-    // File loading
-    this.els.btnLoadFile.addEventListener('click', () => this.els.fileInput.click());
-    this.els.fileInput.addEventListener('change', (e) => this._loadFile(e));
+    // File loading — long press or right-click for folder, normal click for files
+    this.els.btnLoadFile.addEventListener('click', (e) => {
+      if (e.shiftKey) {
+        this.els.fileInput.click(); // folder picker
+      } else {
+        this.els.fileInputSingle.click(); // file picker
+      }
+    });
+    this.els.btnLoadFile.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      this.els.fileInput.click(); // folder picker
+    });
+    this.els.fileInput.addEventListener('change', (e) => this._handleFiles(e.target.files));
+    this.els.fileInputSingle.addEventListener('change', (e) => this._handleFiles(e.target.files));
 
     // Playback
     this.els.btnPlayPause.addEventListener('click', () => this._togglePlayback());
+
+    // Prev / Next
+    this.els.btnPrev.addEventListener('click', () => this._prevTrack());
+    this.els.btnNext.addEventListener('click', () => this._nextTrack());
+
+    // Clear playlist
+    this.els.btnClearPlaylist.addEventListener('click', () => this._clearPlaylist());
 
     // Sync toggle
     this.els.btnSync.addEventListener('click', () => this._toggleSync());
@@ -513,6 +544,11 @@ class App {
       if (val >= 40 && val <= 220) {
         this.audioEngine.originalBPM = val;
         this.els.trackBPM.textContent = val;
+        // Also update the playlist entry
+        if (this.currentTrackIndex >= 0) {
+          this.playlist[this.currentTrackIndex].bpm = val;
+          this._renderPlaylist();
+        }
       }
     });
 
@@ -523,10 +559,14 @@ class App {
       this.audioEngine.seek(Math.max(0, Math.min(1, fraction)));
     });
 
-    // Audio ended
+    // Audio ended — auto-advance
     this.audioEngine.audio.addEventListener('ended', () => {
-      this._updatePlayPauseIcon(false);
-      this.audioEngine.playing = false;
+      if (this.currentTrackIndex < this.playlist.length - 1) {
+        this._playTrack(this.currentTrackIndex + 1);
+      } else {
+        this._updatePlayPauseIcon(false);
+        this.audioEngine.playing = false;
+      }
     });
 
     // Settings
@@ -563,32 +603,236 @@ class App {
     });
   }
 
-  async _loadFile(event) {
-    const file = event.target.files[0];
-    if (!file) return;
+  // ── Drag & Drop ──
+
+  _setupDragDrop() {
+    let dragCounter = 0;
+
+    document.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragCounter++;
+      this.els.dropOverlay.classList.add('visible');
+    });
+
+    document.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        this.els.dropOverlay.classList.remove('visible');
+      }
+    });
+
+    document.addEventListener('dragover', (e) => {
+      e.preventDefault();
+    });
+
+    document.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      this.els.dropOverlay.classList.remove('visible');
+
+      const files = await this._getDroppedFiles(e.dataTransfer);
+      if (files.length) this._handleFiles(files);
+    });
+  }
+
+  /** Recursively extract audio files from dropped items (supports folders) */
+  async _getDroppedFiles(dataTransfer) {
+    const audioExts = /\.(mp3|m4a|aac|ogg|opus|flac|wav|weba|webm)$/i;
+    const files = [];
+
+    // Use webkitGetAsEntry for folder support
+    const entries = [];
+    for (const item of dataTransfer.items) {
+      const entry = item.webkitGetAsEntry?.();
+      if (entry) entries.push(entry);
+    }
+
+    if (entries.length > 0) {
+      const readEntry = (entry) => new Promise((resolve) => {
+        if (entry.isFile) {
+          entry.file((f) => {
+            if (audioExts.test(f.name)) files.push(f);
+            resolve();
+          }, () => resolve());
+        } else if (entry.isDirectory) {
+          const reader = entry.createReader();
+          const readBatch = () => {
+            reader.readEntries(async (batch) => {
+              if (batch.length === 0) { resolve(); return; }
+              for (const e of batch) await readEntry(e);
+              readBatch(); // keep reading until empty (batched API)
+            }, () => resolve());
+          };
+          readBatch();
+        } else {
+          resolve();
+        }
+      });
+
+      for (const entry of entries) await readEntry(entry);
+    } else {
+      // Fallback: plain file list
+      for (const f of dataTransfer.files) {
+        if (audioExts.test(f.name)) files.push(f);
+      }
+    }
+
+    return files;
+  }
+
+  // ── Playlist ──
+
+  _handleFiles(fileList) {
+    const audioExts = /\.(mp3|m4a|aac|ogg|opus|flac|wav|weba|webm)$/i;
+    const newFiles = [];
+    for (const f of fileList) {
+      if (audioExts.test(f.name)) newFiles.push(f);
+    }
+    if (newFiles.length === 0) return;
+
+    // Sort by name
+    newFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+    const startIndex = this.playlist.length;
+    for (const file of newFiles) {
+      const name = file.name.replace(/\.[^.]+$/, '');
+      this.playlist.push({ file, name, bpm: null, detecting: false });
+    }
+
+    this._updatePlaylistUI();
+
+    // Start BPM detection for new tracks
+    for (let i = startIndex; i < this.playlist.length; i++) {
+      this._detectBPM(i);
+    }
+
+    // Auto-play first track if nothing is loaded
+    if (this.currentTrackIndex < 0) {
+      this._playTrack(startIndex);
+    }
+
+    // Reset file inputs
+    this.els.fileInput.value = '';
+    this.els.fileInputSingle.value = '';
+  }
+
+  async _detectBPM(index) {
+    const track = this.playlist[index];
+    if (!track || track.detecting) return;
+    track.detecting = true;
+    this._renderPlaylist();
 
     try {
-      await this.audioEngine.loadFile(file);
-      this.els.trackName.textContent = this.audioEngine.fileName;
+      track.bpm = await BPMDetector.detect(track.file);
+    } catch {
+      track.bpm = null;
+    }
+    track.detecting = false;
+    this._renderPlaylist();
+
+    // Update display if this is the current track
+    if (index === this.currentTrackIndex && track.bpm) {
+      this.audioEngine.originalBPM = track.bpm;
+      this.els.bpmInput.value = track.bpm;
+      this.els.trackBPM.textContent = track.bpm;
+    }
+  }
+
+  async _playTrack(index) {
+    if (index < 0 || index >= this.playlist.length) return;
+    const track = this.playlist[index];
+    this.currentTrackIndex = index;
+
+    try {
+      await this.audioEngine.loadFile(track.file);
+      this.els.trackName.textContent = track.name;
       this.els.trackName.classList.add('loaded');
       this.els.btnPlayPause.disabled = false;
       this.els.duration.textContent = this._formatTime(this.audioEngine.duration);
 
-      // Auto-detect BPM in background
-      this.els.trackBPM.textContent = '...';
-      BPMDetector.detect(file).then((bpm) => {
-        this.audioEngine.originalBPM = bpm;
-        this.els.bpmInput.value = bpm;
-        this.els.trackBPM.textContent = bpm;
-      }).catch(() => {
-        this.els.trackBPM.textContent = '--';
-      });
-    } catch (err) {
-      this.els.trackName.textContent = 'Error loading file';
-    }
+      if (track.bpm) {
+        this.audioEngine.originalBPM = track.bpm;
+        this.els.bpmInput.value = track.bpm;
+        this.els.trackBPM.textContent = track.bpm;
+      } else {
+        this.audioEngine.originalBPM = 0;
+        this.els.bpmInput.value = '';
+        this.els.trackBPM.textContent = track.detecting ? '...' : '--';
+      }
 
-    // Reset file input so the same file can be re-selected
-    event.target.value = '';
+      this.audioEngine.play();
+      this._updatePlayPauseIcon(true);
+      this._updateNavButtons();
+      this._renderPlaylist();
+    } catch {
+      this.els.trackName.textContent = 'Error loading track';
+    }
+  }
+
+  _prevTrack() {
+    if (this.currentTrackIndex > 0) {
+      this._playTrack(this.currentTrackIndex - 1);
+    }
+  }
+
+  _nextTrack() {
+    if (this.currentTrackIndex < this.playlist.length - 1) {
+      this._playTrack(this.currentTrackIndex + 1);
+    }
+  }
+
+  _clearPlaylist() {
+    this.audioEngine.pause();
+    this._updatePlayPauseIcon(false);
+    this.playlist = [];
+    this.currentTrackIndex = -1;
+    this.els.trackName.textContent = 'No track loaded';
+    this.els.trackName.classList.remove('loaded');
+    this.els.btnPlayPause.disabled = true;
+    this.els.duration.textContent = '0:00';
+    this.els.progressFill.style.width = '0%';
+    this._updatePlaylistUI();
+    this._updateNavButtons();
+  }
+
+  _updatePlaylistUI() {
+    const hasPlaylist = this.playlist.length > 0;
+    this.els.playlist.hidden = !hasPlaylist;
+    this.els.playlistTitle.textContent = this.playlist.length + ' track' + (this.playlist.length === 1 ? '' : 's');
+    this._renderPlaylist();
+    this._updateNavButtons();
+  }
+
+  _renderPlaylist() {
+    const container = this.els.playlistTracks;
+    container.innerHTML = '';
+    this.playlist.forEach((track, i) => {
+      const row = document.createElement('div');
+      row.className = 'playlist-track' + (i === this.currentTrackIndex ? ' active' : '');
+      row.innerHTML =
+        '<span class="playlist-track-num">' + (i + 1) + '</span>' +
+        '<span class="playlist-track-name">' + this._escapeHTML(track.name) + '</span>' +
+        '<span class="playlist-track-bpm">' + (track.detecting ? '...' : (track.bpm || '--')) + '</span>';
+      row.addEventListener('click', () => this._playTrack(i));
+      container.appendChild(row);
+    });
+
+    // Scroll active track into view
+    const active = container.querySelector('.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+
+  _updateNavButtons() {
+    this.els.btnPrev.disabled = this.currentTrackIndex <= 0;
+    this.els.btnNext.disabled = this.currentTrackIndex >= this.playlist.length - 1;
+  }
+
+  _escapeHTML(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
   }
 
   _togglePlayback() {

@@ -63,7 +63,13 @@
 
       <!-- Playback Controls -->
       <div class="controls">
-        <button class="btn btn-secondary" id="btnLoadFile" title="Load audio file">
+        <button class="btn btn-secondary" id="btnPrev" disabled title="Previous track">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <rect x="3" y="5" width="3" height="14"/>
+            <polygon points="19,5 8,12 19,19"/>
+          </svg>
+        </button>
+        <button class="btn btn-secondary" id="btnLoadFile" title="Load files or folder">
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
             <polyline points="17 8 12 3 7 8"/>
@@ -84,6 +90,21 @@
             <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
           </svg>
         </button>
+        <button class="btn btn-secondary" id="btnNext" disabled title="Next track">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <polygon points="5,5 16,12 5,19"/>
+            <rect x="18" y="5" width="3" height="14"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Playlist -->
+      <div class="playlist" id="playlist" hidden>
+        <div class="playlist-header">
+          <span class="playlist-title" id="playlistTitle">0 tracks</span>
+          <button class="playlist-clear" id="btnClearPlaylist">Clear</button>
+        </div>
+        <div class="playlist-tracks" id="playlistTracks"></div>
       </div>
 
       <!-- Tap BPM -->
@@ -125,9 +146,17 @@
           </label>
         </div>
       </details>
+
+      <p class="version">v1.0.0</p>
     </main>
 
-    <input type="file" id="fileInput" accept="audio/*" hidden>
+    <input type="file" id="fileInput" accept="audio/*" multiple webkitdirectory hidden>
+    <input type="file" id="fileInputSingle" accept="audio/*" multiple hidden>
+
+    <!-- Drop zone overlay -->
+    <div class="drop-overlay" id="dropOverlay">
+      <div class="drop-message">Drop audio files or folder</div>
+    </div>
   </div>
 
   <script src="app.js"></script>
