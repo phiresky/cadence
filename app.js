@@ -463,6 +463,9 @@ class App {
     this._setupDragDrop();
     this._setupInstall();
     this._startUILoop();
+
+    // Start sync by default
+    this._toggleSync();
   }
 
   _cacheElements() {
