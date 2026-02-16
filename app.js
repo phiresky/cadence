@@ -976,7 +976,21 @@ class App {
 
 const app = new App();
 
-// Register service worker
+// Register service worker + auto-reload on update
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    // Check for updates every 60 seconds
+    setInterval(() => reg.update(), 60000);
+
+    reg.addEventListener('updatefound', () => {
+      const newWorker = reg.installing;
+      if (!newWorker) return;
+      newWorker.addEventListener('statechange', () => {
+        // New SW activated and there's already a controller (i.e. this isn't first install)
+        if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+          window.location.reload();
+        }
+      });
+    });
+  }).catch(() => {});
 }
