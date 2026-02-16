@@ -1,3 +1,7 @@
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const AUDIO_EXTENSIONS = /\.(mp3|m4a|aac|ogg|opus|flac|wav|weba|webm)$/i;
+
 // ─── Step Detector ──────────────────────────────────────────────────────────
 
 class StepDetector {
@@ -143,6 +147,7 @@ class AudioEngine {
     this.fileName = '';
 
     this._rafId = null;
+    this._blobUrl = null;
     this._smoothLoop = this._smoothLoop.bind(this);
 
     // Media Session API for lock screen controls
@@ -150,7 +155,11 @@ class AudioEngine {
   }
 
   async loadFile(file) {
+    if (this._blobUrl) {
+      URL.revokeObjectURL(this._blobUrl);
+    }
     const url = URL.createObjectURL(file);
+    this._blobUrl = url;
     this.audio.src = url;
     this.fileName = file.name.replace(/\.[^.]+$/, '');
     this.loaded = true;
@@ -265,6 +274,7 @@ class BPMDetector {
     const skip = Math.min(15, audioBuf.duration * 0.15);
     const dur = Math.min(30, audioBuf.duration - skip);
     if (dur < 5) throw new Error('Track too short for BPM detection');
+    if (dur > 600) throw new Error('Track too long for BPM detection (>10 min)');
     const outLen = Math.ceil(dur * sr);
 
     // Render bass and full-range filtered versions in parallel
@@ -461,6 +471,7 @@ class App {
     this._cacheElements();
     this._bindEvents();
     this._setupDragDrop();
+    this._initPlaylistDelegation();
     this._setupInstall();
     this._startUILoop();
 
@@ -552,6 +563,9 @@ class App {
           this.playlist[this.currentTrackIndex].bpm = val;
           this._renderPlaylist();
         }
+      } else if (this.els.bpmInput.value !== '') {
+        this.els.bpmInput.classList.add('invalid');
+        setTimeout(() => this.els.bpmInput.classList.remove('invalid'), 800);
       }
     });
 
@@ -642,7 +656,6 @@ class App {
 
   /** Recursively extract audio files from dropped items (supports folders) */
   async _getDroppedFiles(dataTransfer) {
-    const audioExts = /\.(mp3|m4a|aac|ogg|opus|flac|wav|weba|webm)$/i;
     const files = [];
 
     // Use webkitGetAsEntry for folder support
@@ -656,7 +669,7 @@ class App {
       const readEntry = (entry) => new Promise((resolve) => {
         if (entry.isFile) {
           entry.file((f) => {
-            if (audioExts.test(f.name)) files.push(f);
+            if (AUDIO_EXTENSIONS.test(f.name)) files.push(f);
             resolve();
           }, () => resolve());
         } else if (entry.isDirectory) {
@@ -678,7 +691,7 @@ class App {
     } else {
       // Fallback: plain file list
       for (const f of dataTransfer.files) {
-        if (audioExts.test(f.name)) files.push(f);
+        if (AUDIO_EXTENSIONS.test(f.name)) files.push(f);
       }
     }
 
@@ -688,10 +701,9 @@ class App {
   // ── Playlist ──
 
   _handleFiles(fileList) {
-    const audioExts = /\.(mp3|m4a|aac|ogg|opus|flac|wav|weba|webm)$/i;
     const newFiles = [];
     for (const f of fileList) {
-      if (audioExts.test(f.name)) newFiles.push(f);
+      if (AUDIO_EXTENSIONS.test(f.name)) newFiles.push(f);
     }
     if (newFiles.length === 0) return;
 
@@ -724,7 +736,8 @@ class App {
 
     try {
       track.bpm = await BPMDetector.detect(track.file);
-    } catch {
+    } catch (err) {
+      console.warn('BPM detection failed for "' + track.name + '":', err.message || err);
       track.bpm = null;
     }
     track.detecting = false;
@@ -766,7 +779,8 @@ class App {
       this._updatePlayPauseIcon(true);
       this._updateNavButtons();
       this._renderPlaylist();
-    } catch {
+    } catch (err) {
+      console.error('Failed to load track:', err);
       this.els.trackName.textContent = 'Error loading track';
     }
   }
@@ -785,6 +799,10 @@ class App {
 
   _clearPlaylist() {
     this.audioEngine.pause();
+    if (this.audioEngine._blobUrl) {
+      URL.revokeObjectURL(this.audioEngine._blobUrl);
+      this.audioEngine._blobUrl = null;
+    }
     this._updatePlayPauseIcon(false);
     this.playlist = [];
     this.currentTrackIndex = -1;
@@ -805,17 +823,26 @@ class App {
     this._updateNavButtons();
   }
 
+  _initPlaylistDelegation() {
+    this.els.playlistTracks.addEventListener('click', (e) => {
+      const row = e.target.closest('.playlist-track');
+      if (!row) return;
+      const index = parseInt(row.dataset.index, 10);
+      if (!isNaN(index)) this._playTrack(index);
+    });
+  }
+
   _renderPlaylist() {
     const container = this.els.playlistTracks;
     container.innerHTML = '';
     this.playlist.forEach((track, i) => {
       const row = document.createElement('div');
       row.className = 'playlist-track' + (i === this.currentTrackIndex ? ' active' : '');
+      row.dataset.index = i;
       row.innerHTML =
         '<span class="playlist-track-num">' + (i + 1) + '</span>' +
         '<span class="playlist-track-name">' + this._escapeHTML(track.name) + '</span>' +
         '<span class="playlist-track-bpm">' + (track.detecting ? '...' : (track.bpm || '--')) + '</span>';
-      row.addEventListener('click', () => this._playTrack(i));
       container.appendChild(row);
     });
 
@@ -870,10 +897,11 @@ class App {
       // Also start decay timer in sim mode
       if (this.els.simMode.checked) {
         this.stepDetector.active = true;
+        if (this.stepDetector._decayTimer) clearInterval(this.stepDetector._decayTimer);
         this.stepDetector._decayTimer = setInterval(() => this.stepDetector._checkDecay(), 1000);
       }
     } catch (err) {
-      alert('Could not access motion sensors: ' + err.message);
+      this._showToast('Could not access motion sensors: ' + err.message);
     }
   }
 
@@ -961,6 +989,20 @@ class App {
       requestAnimationFrame(update);
     };
     requestAnimationFrame(update);
+  }
+
+  _showToast(message) {
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = message;
+    document.getElementById('app').appendChild(toast);
+    // Trigger reflow then add visible class for animation
+    void toast.offsetWidth;
+    toast.classList.add('visible');
+    setTimeout(() => {
+      toast.classList.remove('visible');
+      toast.addEventListener('transitionend', () => toast.remove());
+    }, 3000);
   }
 
   _formatTime(seconds) {

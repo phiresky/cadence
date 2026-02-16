@@ -137,12 +137,6 @@ main {
   transition: none;
 }
 
-.step-flash.flash {
-  opacity: 0.6;
-  transition: opacity 0.35s ease-out;
-  opacity: 0;
-}
-
 /* BPM Info Cards */
 .bpm-info {
   display: flex;
@@ -333,6 +327,16 @@ main {
 
 .bpm-input:focus {
   border-color: var(--accent);
+}
+
+.bpm-input.invalid {
+  border-color: var(--energy);
+  animation: shake 0.3s ease;
+}
+
+@keyframes shake {
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
 }
 
 /* Playlist */
@@ -556,6 +560,31 @@ main {
 
 .spm-display.syncing .spm-label {
   color: var(--accent);
+}
+
+/* Toast notifications */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--surface);
+  border: 1px solid var(--energy);
+  color: var(--text);
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  max-width: 90vw;
+  text-align: center;
+  pointer-events: none;
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .version {
