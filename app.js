@@ -334,7 +334,12 @@ class BPMDetector {
       best = dbl;
     }
 
-    return best;
+    // Find beat phase offset for beat-step synchronization
+    const phaseInWindow = BPMDetector._findBeatPhase(bassOnset, fullOnset, best, onsetRate);
+    const beatPeriod = 60 / best;
+    const beatOffset = (skip + phaseInWindow) % beatPeriod;
+
+    return { bpm: best, beatOffset };
   }
 
   /** Render audio through a chain of biquad filters via OfflineAudioContext */
@@ -407,6 +412,30 @@ class BPMDetector {
     }
     return result;
   }
+
+  /** Find the beat phase offset within the onset envelope */
+  static _findBeatPhase(bassOnset, fullOnset, bpm, onsetRate) {
+    const beatPeriodSamples = onsetRate * 60 / bpm;
+    const numOffsets = Math.ceil(beatPeriodSamples);
+    let bestOffset = 0, bestScore = -Infinity;
+
+    const len = Math.min(bassOnset.length, fullOnset.length);
+    for (let offset = 0; offset < numOffsets; offset++) {
+      let bScore = 0, fScore = 0;
+      for (let pos = offset; pos < len; pos += beatPeriodSamples) {
+        const idx = Math.round(pos);
+        if (idx < bassOnset.length) bScore += bassOnset[idx];
+        if (idx < fullOnset.length) fScore += fullOnset[idx];
+      }
+      const score = bScore * 2.0 + fScore;
+      if (score > bestScore) {
+        bestScore = score;
+        bestOffset = offset;
+      }
+    }
+
+    return bestOffset / onsetRate;
+  }
 }
 
 
@@ -443,6 +472,151 @@ class TapBPM {
 }
 
 
+// ─── Sync Visualizer ─────────────────────────────────────────────────────────
+
+class SyncVisualizer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.beatEvents = [];
+    this.stepEvents = [];
+    this.timeWindow = 6000;
+    this.maxEvents = 60;
+
+    this.bpm = 0;
+    this.beatOffset = 0;
+    this._lastBeatIndex = -1;
+
+    this.width = 0;
+    this.height = 0;
+    this._resize();
+    this._resizeHandler = () => this._resize();
+    window.addEventListener('resize', this._resizeHandler);
+  }
+
+  _resize() {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    this.canvas.width = rect.width * dpr;
+    this.canvas.height = rect.height * dpr;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.width = rect.width;
+    this.height = rect.height;
+  }
+
+  setBeatGrid(bpm, beatOffset) {
+    this.bpm = bpm;
+    this.beatOffset = beatOffset;
+    this._lastBeatIndex = -1;
+    this.beatEvents = [];
+  }
+
+  clear() {
+    this.bpm = 0;
+    this.beatOffset = 0;
+    this._lastBeatIndex = -1;
+    this.beatEvents = [];
+    this.stepEvents = [];
+  }
+
+  recordStep() {
+    this.stepEvents.push(performance.now());
+    while (this.stepEvents.length > this.maxEvents) this.stepEvents.shift();
+  }
+
+  update(audioTime, playbackRate) {
+    if (!this.width) this._resize();
+
+    const now = performance.now();
+
+    // Track beat events from audio position
+    if (this.bpm > 0 && audioTime > 0) {
+      const beatPeriod = 60 / this.bpm;
+      const beatIndex = Math.floor((audioTime - this.beatOffset) / beatPeriod);
+
+      if (beatIndex > this._lastBeatIndex) {
+        if (this._lastBeatIndex >= 0 && beatIndex - this._lastBeatIndex <= 2) {
+          const fractional = (audioTime - this.beatOffset) / beatPeriod;
+          const overshootAudio = (fractional - beatIndex) * beatPeriod;
+          const overshootMs = (overshootAudio / (playbackRate || 1)) * 1000;
+          this.beatEvents.push(now - overshootMs);
+          while (this.beatEvents.length > this.maxEvents) this.beatEvents.shift();
+        }
+        this._lastBeatIndex = beatIndex;
+      }
+    }
+
+    // Prune old events
+    const cutoff = now - this.timeWindow;
+    while (this.beatEvents.length > 0 && this.beatEvents[0] < cutoff) this.beatEvents.shift();
+    while (this.stepEvents.length > 0 && this.stepEvents[0] < cutoff) this.stepEvents.shift();
+
+    this._draw(now);
+  }
+
+  _draw(now) {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    if (w === 0 || h === 0) return;
+
+    const mid = h / 2;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // Center divider
+    ctx.strokeStyle = 'rgba(37, 37, 69, 0.6)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(w, mid);
+    ctx.stroke();
+
+    // Labels
+    ctx.font = '9px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(0, 212, 255, 0.4)';
+    ctx.fillText('BEATS', 4, 11);
+    ctx.fillStyle = 'rgba(255, 107, 53, 0.4)';
+    ctx.fillText('STEPS', 4, h - 3);
+
+    // Beat ticks (top half)
+    this._drawTicks(ctx, this.beatEvents, now, 2, mid - 2, 0, 212, 255);
+
+    // Step ticks (bottom half)
+    this._drawTicks(ctx, this.stepEvents, now, mid + 2, h - 2, 255, 107, 53);
+  }
+
+  _drawTicks(ctx, events, now, top, bottom, r, g, b) {
+    const w = this.width;
+    for (const t of events) {
+      const age = now - t;
+      if (age < 0 || age > this.timeWindow) continue;
+
+      const x = w * (1 - age / this.timeWindow);
+      const alpha = 0.3 + 0.7 * (1 - age / this.timeWindow);
+
+      // Glow
+      ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha * 0.15})`;
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+
+      // Main tick
+      ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+    }
+  }
+}
+
+
 // ─── App Controller ─────────────────────────────────────────────────────────
 
 class App {
@@ -453,12 +627,17 @@ class App {
     this.syncing = false;
 
     // Playlist state
-    this.playlist = []; // [{ file, name, bpm, detecting }]
+    this.playlist = []; // [{ file, name, bpm, beatOffset, detecting }]
     this.currentTrackIndex = -1;
+
+    // Beat-step phase sync
+    this._phaseCorrection = 0;
+    this._currentBeatOffset = undefined;
 
     this._deferredInstallPrompt = null;
 
     this._cacheElements();
+    this.syncVisualizer = new SyncVisualizer(this.els.syncVizCanvas);
     this._bindEvents();
     this._setupDragDrop();
     this._setupInstall();
@@ -506,6 +685,7 @@ class App {
       btnClearPlaylist: document.getElementById('btnClearPlaylist'),
       fileInputSingle: document.getElementById('fileInputSingle'),
       dropOverlay: document.getElementById('dropOverlay'),
+      syncVizCanvas: document.getElementById('syncVizCanvas'),
     };
   }
 
@@ -701,7 +881,7 @@ class App {
     const startIndex = this.playlist.length;
     for (const file of newFiles) {
       const name = file.name.replace(/\.[^.]+$/, '');
-      this.playlist.push({ file, name, bpm: null, detecting: false });
+      this.playlist.push({ file, name, bpm: null, beatOffset: undefined, detecting: false });
     }
 
     this._updatePlaylistUI();
@@ -723,9 +903,12 @@ class App {
     this._renderPlaylist();
 
     try {
-      track.bpm = await BPMDetector.detect(track.file);
+      const result = await BPMDetector.detect(track.file);
+      track.bpm = result.bpm;
+      track.beatOffset = result.beatOffset;
     } catch {
       track.bpm = null;
+      track.beatOffset = undefined;
     }
     track.detecting = false;
     this._renderPlaylist();
@@ -735,6 +918,8 @@ class App {
       this.audioEngine.originalBPM = track.bpm;
       this.els.bpmInput.value = track.bpm;
       this.els.trackBPM.textContent = track.bpm;
+      this._currentBeatOffset = track.beatOffset;
+      this.syncVisualizer.setBeatGrid(track.bpm, track.beatOffset);
     }
   }
 
@@ -754,10 +939,14 @@ class App {
         this.audioEngine.originalBPM = track.bpm;
         this.els.bpmInput.value = track.bpm;
         this.els.trackBPM.textContent = track.bpm;
+        this._currentBeatOffset = track.beatOffset;
+        this.syncVisualizer.setBeatGrid(track.bpm, track.beatOffset);
       } else {
         this.audioEngine.originalBPM = 0;
         this.els.bpmInput.value = '';
         this.els.trackBPM.textContent = '--';
+        this._currentBeatOffset = undefined;
+        this.syncVisualizer.clear();
         // Detect BPM on demand for current track
         if (!track.detecting) this._detectBPM(index);
       }
@@ -788,6 +977,9 @@ class App {
     this._updatePlayPauseIcon(false);
     this.playlist = [];
     this.currentTrackIndex = -1;
+    this._currentBeatOffset = undefined;
+    this._phaseCorrection = 0;
+    this.syncVisualizer.clear();
     this.els.trackName.textContent = 'No track loaded';
     this.els.trackName.classList.remove('loaded');
     this.els.btnPlayPause.disabled = true;
@@ -852,6 +1044,7 @@ class App {
       this.syncing = false;
       this.stepDetector.stop();
       this.audioEngine.resetRate();
+      this._phaseCorrection = 0;
       this.els.btnSync.classList.remove('active');
       this.els.spmDisplay.classList.remove('syncing');
       this.els.spmNumber.textContent = '--';
@@ -890,9 +1083,23 @@ class App {
     // Flash animation
     const flash = this.els.stepFlash;
     flash.classList.remove('pulse');
-    // Force reflow to restart animation
     void flash.offsetWidth;
     flash.classList.add('pulse');
+
+    // Record for visualizer
+    this.syncVisualizer.recordStep();
+
+    // Phase correction for beat-step sync
+    if (this.syncing && this.audioEngine.originalBPM && this._currentBeatOffset !== undefined) {
+      const audioTime = this.audioEngine.currentTime;
+      const beatPeriod = 60 / this.audioEngine.originalBPM;
+      const phase = ((audioTime - this._currentBeatOffset) % beatPeriod + beatPeriod) % beatPeriod;
+      let error = phase / beatPeriod;
+      if (error > 0.5) error -= 1;
+
+      this._phaseCorrection = -error * 0.4;
+      this._updateTargetRate();
+    }
   }
 
   _onSPMChange(spm) {
@@ -900,10 +1107,29 @@ class App {
     this._updateRing(spm);
 
     if (this.syncing && spm > 0) {
-      this.audioEngine.setTargetBPM(spm);
+      this._updateTargetRate();
     } else {
       this.audioEngine.resetRate();
+      this._phaseCorrection = 0;
     }
+  }
+
+  _updateTargetRate() {
+    const spm = this.stepDetector.spm;
+    if (!spm || !this.audioEngine.originalBPM) {
+      this.audioEngine.resetRate();
+      return;
+    }
+
+    let rate = spm / this.audioEngine.originalBPM;
+
+    // Apply phase correction if beat grid is available
+    if (this._currentBeatOffset !== undefined) {
+      rate *= (1 + this._phaseCorrection);
+    }
+
+    this.audioEngine.targetRate = Math.max(this.audioEngine.minRate,
+                                            Math.min(this.audioEngine.maxRate, rate));
   }
 
   _updateRing(spm) {
@@ -957,6 +1183,9 @@ class App {
       this.els.adjustedBPM.textContent = origBPM
         ? Math.round(origBPM * this.audioEngine.currentRate)
         : '--';
+
+      // Update sync visualizer
+      this.syncVisualizer.update(this.audioEngine.currentTime, this.audioEngine.currentRate);
 
       requestAnimationFrame(update);
     };
