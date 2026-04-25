@@ -137,7 +137,7 @@ class AudioEngine {
     this.currentRate = 1.0;
     this.minRate = 0.7;
     this.maxRate = 1.4;
-    this.smoothing = 0.08;
+    this.smoothing = 0.03;
     this.loaded = false;
     this.playing = false;
     this.fileName = '';
@@ -780,8 +780,9 @@ class App {
     });
 
     this.els.smoothing.addEventListener('input', (e) => {
-      this.audioEngine.smoothing = parseFloat(e.target.value);
-      this.els.smoothingValue.textContent = e.target.value;
+      const val = parseFloat(e.target.value);
+      this.audioEngine.smoothing = val;
+      this.els.smoothingValue.textContent = val.toFixed(3);
     });
 
     this.els.linkPitchToSpeed.addEventListener('change', (e) => {
