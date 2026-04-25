@@ -141,6 +141,7 @@ class AudioEngine {
     this.loaded = false;
     this.playing = false;
     this.fileName = '';
+    this.setLinkPitchToSpeed(false);
 
     this._rafId = null;
     this._smoothLoop = this._smoothLoop.bind(this);
@@ -196,6 +197,15 @@ class AudioEngine {
 
   resetRate() {
     this.targetRate = 1.0;
+  }
+
+  setLinkPitchToSpeed(linked) {
+    // When linked, pitch shifts with playback rate (no time-stretching).
+    // Otherwise the browser preserves pitch while changing tempo.
+    const preserve = !linked;
+    this.audio.preservesPitch = preserve;
+    this.audio.mozPreservesPitch = preserve;
+    this.audio.webkitPreservesPitch = preserve;
   }
 
   _startSmoothing() {
@@ -676,6 +686,7 @@ class App {
       smoothing: document.getElementById('smoothing'),
       smoothingValue: document.getElementById('smoothingValue'),
       simMode: document.getElementById('simMode'),
+      linkPitchToSpeed: document.getElementById('linkPitchToSpeed'),
       btnInstall: document.getElementById('btnInstall'),
       btnPrev: document.getElementById('btnPrev'),
       btnNext: document.getElementById('btnNext'),
@@ -771,6 +782,10 @@ class App {
     this.els.smoothing.addEventListener('input', (e) => {
       this.audioEngine.smoothing = parseFloat(e.target.value);
       this.els.smoothingValue.textContent = e.target.value;
+    });
+
+    this.els.linkPitchToSpeed.addEventListener('change', (e) => {
+      this.audioEngine.setLinkPitchToSpeed(e.target.checked);
     });
 
     // Step detector callbacks
